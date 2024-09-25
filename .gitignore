@@ -1,0 +1,12 @@
+/target/
+Cargo.lock
+**/*.rs.bk
+/build/
+/vendor/
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.swp
+*~
+*.ppm
