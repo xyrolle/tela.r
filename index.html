@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="UTF-8" />
+        <title>Tela</title>
+    </head>
+    <body>
+        <script type="module">
+            import init, { Image, Pixel } from "./pkg/tela.js";
+
+            async function run() {
+                const wasm = await init();
+
+                const width = 800;
+                const height = 600;
+                const img = new Image(width, height);
+
+                img.fill(new Pixel(0, 0, 0, 255));
+
+                // Set up the canvas
+                const canvas = document.createElement("canvas");
+                canvas.width = width;
+                canvas.height = height;
+                document.body.appendChild(canvas);
+                const ctx = canvas.getContext("2d");
+
+                let lastTime = performance.now();
+                let cumulativeTime = 0;
+
+                async function animate() {
+                    const currentTime = performance.now();
+                    const dt = (currentTime - lastTime) / 1000;
+                    lastTime = currentTime;
+
+                    cumulativeTime += dt;
+
+                    img.render(cumulativeTime);
+
+                    const pixels = img.get_pixels();
+
+                    const imageData = new ImageData(
+                        new Uint8ClampedArray(pixels),
+                        width,
+                        height,
+                    );
+
+                    ctx.putImageData(imageData, 0, 0);
+
+                    requestAnimationFrame(animate);
+                }
+
+                animate();
+            }
+
+            run();
+        </script>
+    </body>
+</html>

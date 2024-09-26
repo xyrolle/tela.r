@@ -13,12 +13,13 @@ pub fn run() {
         a: 255,
     });
 
-    image.draw_line(
-        0,
-        0,
-        WIDTH / 4,
-        HEIGHT,
-        1,
+    image.draw_filled_triangle(
+        100.0,
+        100.0,
+        300.0,
+        300.0,
+        100.0,
+        600.0,
         tela::Pixel {
             r: 255,
             g: 0,
@@ -28,6 +29,6 @@ pub fn run() {
     );
 
     image
-        .save_to_ppm("line.ppm")
+        .save_to_ppm("triangle.ppm")
         .expect("Failed to save PPM file");
 }
