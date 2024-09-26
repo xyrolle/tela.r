@@ -15,6 +15,7 @@ pub fn run() {
         r: 0x26,
         g: 0x19,
         b: 0x0F,
+        a: 255,
     });
 
     for y in 0..rows {
@@ -29,6 +30,7 @@ pub fn run() {
                         r: 0xE8,
                         g: 0xD3,
                         b: 0xB2,
+                        a: 255,
                     },
                 );
             }
