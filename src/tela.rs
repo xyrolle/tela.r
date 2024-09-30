@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+use image::{ImageBuffer, Rgba};
 use std::fs::File;
 use std::io::{self, Write};
 use wasm_bindgen::prelude::*;
@@ -74,13 +75,55 @@ impl Image {
 
     #[wasm_bindgen]
     pub fn get_pixels_length(&self) -> usize {
-        self.pixels.len() * 4 // Each pixel has 3 u8 components (r, g, b, a)
+        self.pixels.len() * 4
+    }
+
+    fn blend_pixel(&self, bg: &Pixel, fg: &Pixel) -> Pixel {
+        let fg_alpha = fg.a as f32 / 255.0;
+        let bg_alpha = bg.a as f32 / 255.0;
+
+        let out_alpha = fg_alpha + bg_alpha * (1.0 - fg_alpha);
+
+        let out_r = if out_alpha > 0.0 {
+            (fg_alpha * fg.r as f32 + bg_alpha * bg.r as f32 * (1.0 - fg_alpha)) / out_alpha
+        } else {
+            0.0
+        };
+
+        let out_g = if out_alpha > 0.0 {
+            (fg_alpha * fg.g as f32 + bg_alpha * bg.g as f32 * (1.0 - fg_alpha)) / out_alpha
+        } else {
+            0.0
+        };
+
+        let out_b = if out_alpha > 0.0 {
+            (fg_alpha * fg.b as f32 + bg_alpha * bg.b as f32 * (1.0 - fg_alpha)) / out_alpha
+        } else {
+            0.0
+        };
+
+        Pixel {
+            r: out_r.min(255.0).max(0.0) as u8,
+            g: out_g.min(255.0).max(0.0) as u8,
+            b: out_b.min(255.0).max(0.0) as u8,
+            a: (out_alpha * 255.0).min(255.0).max(0.0) as u8,
+        }
+    }
+
+    fn set_pixel(&mut self, x: usize, y: usize, color: Pixel) {
+        if x < self.width && y < self.height {
+            let idx = y * self.width + x;
+            let bg_color = self.pixels[idx];
+            self.pixels[idx] = self.blend_pixel(&bg_color, &color);
+        }
     }
 
     #[wasm_bindgen]
     pub fn fill(&mut self, color: Pixel) {
-        for pixel in &mut self.pixels {
-            *pixel = color;
+        for y in 0..self.height {
+            for x in 0..self.width {
+                self.set_pixel(x, y, color);
+            }
         }
     }
 
@@ -92,7 +135,7 @@ impl Image {
                 for dx in 0..w {
                     let x = x0 + dx;
                     if x < self.width {
-                        self.pixels[y * self.width + x] = color;
+                        self.set_pixel(x, y, color);
                     }
                 }
             }
@@ -102,20 +145,156 @@ impl Image {
     #[wasm_bindgen]
     pub fn fill_circle(&mut self, cx: usize, cy: usize, r: usize, color: Pixel) {
         let r_sq = (r * r) as isize;
-        for y in 0..self.height {
-            for x in 0..self.width {
-                let dx = x as isize - cx as isize;
-                let dy = y as isize - cy as isize;
-                if dx * dx + dy * dy <= r_sq {
-                    self.pixels[y * self.width + x] = color;
+        let cx = cx as isize;
+        let cy = cy as isize;
+
+        let y_start = (cy - r as isize).max(0);
+        let y_end = (cy + r as isize).min(self.height as isize - 1);
+
+        for y in y_start..=y_end {
+            for x in (cx - r as isize)..=(cx + r as isize) {
+                if x >= 0 && x < self.width as isize {
+                    let dx = x - cx;
+                    let dy = y - cy;
+                    if dx * dx + dy * dy <= r_sq {
+                        self.set_pixel(x as usize, y as usize, color);
+                    }
                 }
             }
         }
     }
 
     #[wasm_bindgen]
+    pub fn draw_line(
+        &mut self,
+        x0: usize,
+        y0: usize,
+        x1: usize,
+        y1: usize,
+        thickness: usize,
+        color: Pixel,
+    ) {
+        let mut x0 = x0 as isize;
+        let mut y0 = y0 as isize;
+        let x1 = x1 as isize;
+        let y1 = y1 as isize;
+
+        let dx = (x1 - x0).abs();
+        let dy = (y1 - y0).abs();
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut err = if dx > dy { dx } else { -dy } / 2;
+        let mut e2;
+
+        loop {
+            for t in 0..thickness {
+                let offset = t as isize - (thickness / 2) as isize;
+                let x = x0 + offset * sy;
+                let y = y0 - offset * sx;
+                if x >= 0 && x < self.width as isize && y >= 0 && y < self.height as isize {
+                    self.set_pixel(x as usize, y as usize, color);
+                }
+            }
+
+            if x0 == x1 && y0 == y1 {
+                break;
+            }
+            e2 = err;
+            if e2 > -dx {
+                err -= dy;
+                x0 += sx;
+            }
+            if e2 < dy {
+                err += dx;
+                y0 += sy;
+            }
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn draw_filled_triangle(
+        &mut self,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        color: Pixel,
+    ) {
+        let mut vertices = [(x0, y0), (x1, y1), (x2, y2)];
+
+        vertices.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+
+        let (x0, y0) = vertices[0];
+        let (x1, y1) = vertices[1];
+        let (x2, y2) = vertices[2];
+
+        let inv_slope1 = if (y1 - y0) != 0.0 {
+            (x1 - x0) / (y1 - y0)
+        } else {
+            0.0
+        };
+        let inv_slope2 = if (y2 - y0) != 0.0 {
+            (x2 - x0) / (y2 - y0)
+        } else {
+            0.0
+        };
+
+        let mut x_start = x0;
+        let mut x_end = x0;
+
+        let mut y = y0.round() as i32;
+        let y_end = y1.round() as i32;
+
+        while y < y_end {
+            let x_s = x_start.round() as i32;
+            let x_e = x_end.round() as i32;
+
+            let (x_s, x_e) = if x_s > x_e { (x_e, x_s) } else { (x_s, x_e) };
+
+            for x in x_s..=x_e {
+                if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 {
+                    self.set_pixel(x as usize, y as usize, color);
+                }
+            }
+
+            x_start += inv_slope1;
+            x_end += inv_slope2;
+            y += 1;
+        }
+
+        let inv_slope1 = if (y2 - y1) != 0.0 {
+            (x2 - x1) / (y2 - y1)
+        } else {
+            0.0
+        };
+
+        x_start = x1;
+        y = y1.round() as i32;
+        let y_end = y2.round() as i32;
+
+        while y < y_end {
+            let x_s = x_start.round() as i32;
+            let x_e = x_end.round() as i32;
+
+            let (x_s, x_e) = if x_s > x_e { (x_e, x_s) } else { (x_s, x_e) };
+
+            for x in x_s..=x_e {
+                if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 {
+                    self.set_pixel(x as usize, y as usize, color);
+                }
+            }
+
+            x_start += inv_slope1;
+            x_end += inv_slope2;
+            y += 1;
+        }
+    }
+
+    #[wasm_bindgen]
     pub fn render(&mut self, dt: f32) {
-        self.fill(Pixel::with_default_alpha(0, 0, 0));
+        self.fill(Pixel::new(0, 0, 0, 0));
 
         let size = 200.0;
 
@@ -160,122 +339,6 @@ impl Image {
             Pixel::new(255, 0, 0, alpha),
         );
     }
-
-    #[wasm_bindgen]
-    pub fn draw_line(
-        &mut self,
-        x0: usize,
-        y0: usize,
-        x1: usize,
-        y1: usize,
-        thickness: usize,
-        color: Pixel,
-    ) {
-        let mut x0 = x0 as isize;
-        let mut y0 = y0 as isize;
-        let x1 = x1 as isize;
-        let y1 = y1 as isize;
-
-        let dx = (x1 - x0).abs();
-        let dy = (y1 - y0).abs();
-        let sx = if x0 < x1 { 1 } else { -1 };
-        let sy = if y0 < y1 { 1 } else { -1 };
-        let mut err = if dx > dy { dx } else { -dy } / 2;
-        let mut e2;
-
-        loop {
-            for t in 0..thickness {
-                let offset = t as isize - (thickness / 2) as isize;
-                let x = x0 + offset * sy;
-                let y = y0 - offset * sx;
-                if x >= 0 && x < self.width as isize && y >= 0 && y < self.height as isize {
-                    self.pixels[y as usize * self.width + x as usize] = color;
-                }
-            }
-
-            if x0 == x1 && y0 == y1 {
-                break;
-            }
-            e2 = err;
-            if e2 > -dx {
-                err -= dy;
-                x0 += sx;
-            }
-            if e2 < dy {
-                err += dx;
-                y0 += sy;
-            }
-        }
-    }
-
-    #[wasm_bindgen]
-    pub fn draw_filled_triangle(
-        &mut self,
-        x0: f32,
-        y0: f32,
-        x1: f32,
-        y1: f32,
-        x2: f32,
-        y2: f32,
-        color: Pixel,
-    ) {
-        let mut vertices = [(x0, y0), (x1, y1), (x2, y2)];
-
-        vertices.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-
-        let (x0, y0) = vertices[0];
-        let (x1, y1) = vertices[1];
-        let (x2, y2) = vertices[2];
-
-        let inv_slope1 = if y1 != y0 { (x1 - x0) / (y1 - y0) } else { 0.0 };
-        let inv_slope2 = if y2 != y0 { (x2 - x0) / (y2 - y0) } else { 0.0 };
-
-        let mut x_start = x0;
-        let mut x_end = x0;
-
-        let mut y = y0.round() as i32;
-        let y_end = y1.round() as i32;
-
-        while y < y_end {
-            let x_s = x_start.round() as i32;
-            let x_e = x_end.round() as i32;
-
-            let (x_s, x_e) = if x_s > x_e { (x_e, x_s) } else { (x_s, x_e) };
-
-            for x in x_s..=x_e {
-                if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 {
-                    self.pixels[y as usize * self.width + x as usize] = color;
-                }
-            }
-
-            x_start += inv_slope1;
-            x_end += inv_slope2;
-            y += 1;
-        }
-
-        let inv_slope1 = if y2 != y1 { (x2 - x1) / (y2 - y1) } else { 0.0 };
-
-        x_start = x1;
-        y = y1.round() as i32;
-        let y_end = y2.round() as i32;
-
-        while y < y_end {
-            let x_s = x_start.round() as i32;
-            let x_e = x_end.round() as i32;
-
-            let (x_s, x_e) = if x_s > x_e { (x_e, x_s) } else { (x_s, x_e) };
-
-            for x in x_s..=x_e {
-                if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 {
-                    self.pixels[y as usize * self.width + x as usize] = color;
-                }
-            }
-
-            x_start += inv_slope1;
-            x_end += inv_slope2;
-            y += 1;
-        }
-    }
 }
 
 impl Image {
@@ -289,6 +352,31 @@ impl Image {
         for pixel in &self.pixels {
             writeln!(file, "{} {} {}", pixel.r, pixel.g, pixel.b)?;
         }
+
+        Ok(())
+    }
+
+    pub fn save_to_png(&self, filename: &str) -> Result<(), image::ImageError> {
+        let mut raw_pixels = Vec::with_capacity(self.width * self.height * 4);
+        for pixel in &self.pixels {
+            raw_pixels.push(pixel.r);
+            raw_pixels.push(pixel.g);
+            raw_pixels.push(pixel.b);
+            raw_pixels.push(pixel.a);
+        }
+
+        let buffer: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_raw(self.width as u32, self.height as u32, raw_pixels).ok_or_else(
+                || {
+                    image::ImageError::Parameter(image::error::ParameterError::from_kind(
+                        image::error::ParameterErrorKind::Generic(
+                            "Failed to create ImageBuffer".to_string(),
+                        ),
+                    ))
+                },
+            )?;
+
+        buffer.save(filename)?;
 
         Ok(())
     }

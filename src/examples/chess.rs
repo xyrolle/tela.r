@@ -11,12 +11,7 @@ pub fn run() {
     let rows = HEIGHT / RECT_HEIGHT;
     let cols = WIDTH / RECT_WIDTH;
 
-    image.fill(Pixel {
-        r: 0x26,
-        g: 0x19,
-        b: 0x0F,
-        a: 255,
-    });
+    image.fill(Pixel::with_default_alpha(0x26, 0x19, 0x0F));
 
     for y in 0..rows {
         for x in 0..cols {
@@ -26,18 +21,13 @@ pub fn run() {
                     y * RECT_HEIGHT,
                     RECT_WIDTH,
                     RECT_HEIGHT,
-                    Pixel {
-                        r: 0xE8,
-                        g: 0xD3,
-                        b: 0xB2,
-                        a: 255,
-                    },
+                    Pixel::with_default_alpha(0xE8, 0xD3, 0xB2),
                 );
             }
         }
     }
 
     image
-        .save_to_ppm("chess.ppm")
+        .save_to_png("chess.png")
         .expect("Failed to save PPM file");
 }

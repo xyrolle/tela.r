@@ -29,6 +29,6 @@ pub fn run() {
     );
 
     image
-        .save_to_ppm("triangle.ppm")
+        .save_to_png("triangle.png")
         .expect("Failed to save PPM file");
 }
