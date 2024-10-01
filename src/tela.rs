@@ -144,21 +144,60 @@ impl Image {
 
     #[wasm_bindgen]
     pub fn fill_circle(&mut self, cx: usize, cy: usize, r: usize, color: Pixel) {
-        let r_sq = (r * r) as isize;
-        let cx = cx as isize;
-        let cy = cy as isize;
+        let r_sq = (r * r) as f32;
+        let cx_f = cx as f32;
+        let cy_f = cy as f32;
 
-        let y_start = (cy - r as isize).max(0);
-        let y_end = (cy + r as isize).min(self.height as isize - 1);
+        const AA_RES: usize = 3;
+        const AA_PAD: f32 = 1.0 / (AA_RES as f32 + 1.0);
+        const AA_RES_SQUARED: usize = AA_RES * AA_RES;
+        const INV_AA_RES_SQUARED: f32 = 1.0 / (AA_RES_SQUARED as f32);
+        const AA_FACTOR: f32 = 255.0 * INV_AA_RES_SQUARED;
+
+        let subpixel_offsets: Vec<(f32, f32)> = (0..AA_RES)
+            .flat_map(|sox| {
+                (0..AA_RES)
+                    .map(move |soy| (AA_PAD * (1.0 + sox as f32), AA_PAD * (1.0 + soy as f32)))
+            })
+            .collect();
+
+        let y_start = (cy as isize - r as isize).max(0) as usize;
+        let y_end = (cy + r).min(self.height - 1);
 
         for y in y_start..=y_end {
-            for x in (cx - r as isize)..=(cx + r as isize) {
-                if x >= 0 && x < self.width as isize {
-                    let dx = x - cx;
-                    let dy = y - cy;
-                    if dx * dx + dy * dy <= r_sq {
-                        self.set_pixel(x as usize, y as usize, color);
+            let y_f = y as f32;
+            let dy_center = (y_f + 0.5) - cy_f;
+            let dy_sq_center = dy_center * dy_center;
+
+            let x_start = (cx as isize - r as isize).max(0) as usize;
+            let x_end = (cx + r).min(self.width - 1);
+
+            for x in x_start..=x_end {
+                let dx_center = (x as f32 + 0.5) - cx_f;
+                let dist_sq_center = dx_center * dx_center + dy_sq_center;
+
+                if dist_sq_center <= (r as f32 - 0.5).powi(2) {
+                    self.set_pixel(x, y, color);
+                } else if dist_sq_center > (r as f32 + 0.5).powi(2) {
+                    continue;
+                } else {
+                    let mut count = 0;
+                    for &(offset_x, offset_y) in &subpixel_offsets {
+                        let sx = x as f32 + offset_x;
+                        let sy = y as f32 + offset_y;
+                        let dx = sx - cx_f;
+                        let dy = sy - cy_f;
+
+                        if dx * dx + dy * dy <= r_sq {
+                            count += 1;
+                        }
                     }
+
+                    let anti_aliasing_alpha = (count as f32 * AA_FACTOR) as u8;
+                    let final_alpha = ((color.a as u16 * anti_aliasing_alpha as u16) / 255) as u8;
+
+                    let new_color = Pixel::new(color.r, color.g, color.b, final_alpha);
+                    self.set_pixel(x, y, new_color);
                 }
             }
         }
